@@ -1,0 +1,22 @@
+{
+  "bot_name": "Your bot name",
+  "bot_avatar": "https://kick.com/favicon.ico",
+  "cooldown_minutes": 15,
+  "streamers": [
+    {
+      "username": "your streamer name",
+      "channel_id": 1,
+      "ping_message": "customize your ping message here",
+      "default_color": 5504024,
+      "custom_category": null,
+      "allowed_categories": [],
+      "fields": [
+        { "name": "customize the stream name", "value": "[msg before stream url: ]({url})", "inline": true },
+        { "name": "custom stream game: ", "value": "{whatever}", "inline": true }
+      ],
+      "category_overrides": {
+        "Tabletop RPGs": { "label": "💬 whatever label you want", "color": 3447003 }
+      }
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+# Build output
+/target
+
+# Environment variables and credentials (CRITICAL)
+.env
+.env.local
+.env.*.local
+secrets.env
+
+# Your real config (config.example.json is the tracked template)
+config.json
