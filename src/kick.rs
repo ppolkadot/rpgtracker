@@ -1,17 +1,47 @@
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-// Kick's public Pusher app key and cluster, as used by kick.com's own web client.
-// This is not a secret. If alerts stop arriving, check whether Kick rotated these.
-const PUSHER_APP_KEY: &str = "32cbd69e4b950bf97679";
-const PUSHER_HOST: &str = "ws-us2.pusher.com";
-
 pub const LIVE_EVENT: &str = r"App\Events\StreamerIsLive";
 
-pub fn pusher_url() -> String {
-    format!(
-        "wss://{PUSHER_HOST}/app/{PUSHER_APP_KEY}?protocol=7&client=js&version=8.4.0-rc2&flash=false"
-    )
+pub async fn pusher_url(http: &reqwest::Client, channel_id: u64) -> Result<String, String> {
+    let endpoint =
+        format!("https://web.kick.com/api/v1/realtime/channels/{channel_id}/chat/connection");
+    let response = http
+        .post(endpoint)
+        .json(&json!({
+            "client": {"id": "00000000-0000-4000-8000-000000000000", "type": "web"},
+            "capabilities": {"accepted_providers": [{"provider": "pusher"}]}
+        }))
+        .send()
+        .await
+        .map_err(|e| e.without_url().to_string())?
+        .error_for_status()
+        .map_err(|e| e.without_url().to_string())?;
+    let value: Value = response
+        .json()
+        .await
+        .map_err(|e| e.without_url().to_string())?;
+    pusher_url_from_response(&value)
+}
+
+fn pusher_url_from_response(value: &Value) -> Result<String, String> {
+    let credentials = value["data"]["connections"]
+        .as_array()
+        .and_then(|connections| connections.iter().find(|c| c["provider"] == "pusher"))
+        .map(|c| &c["credentials"])
+        .ok_or("Kick did not return Pusher credentials")?;
+    let valid = |s: &str| !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric());
+    let key = credentials["app_key"]
+        .as_str()
+        .filter(|s| valid(s))
+        .ok_or("invalid Pusher app key")?;
+    let cluster = credentials["cluster"]
+        .as_str()
+        .filter(|s| valid(s))
+        .ok_or("invalid Pusher cluster")?;
+    Ok(format!(
+        "wss://ws-{cluster}.pusher.com/app/{key}?protocol=7&client=js&version=8.4.0-rc2&flash=false"
+    ))
 }
 
 pub fn subscribe_message(channel_id: u64) -> Value {
@@ -33,7 +63,7 @@ pub fn channel_id(channel: &str) -> Option<u64> {
 pub struct PusherMessage {
     pub event: String,
     pub channel: Option<String>,
-    pub data: Option<String>,
+    pub data: Option<Value>,
 }
 
 #[derive(Deserialize)]
@@ -67,6 +97,16 @@ mod tests {
         assert_eq!(channel_id("channel.42"), Some(42));
         assert_eq!(channel_id("channel.abc"), None);
         assert_eq!(channel_id("chatrooms.42"), None);
+    }
+
+    #[test]
+    fn connection_settings_use_kicks_key_and_cluster() {
+        let response = json!({"data":{"connections":[{"provider":"pusher","credentials":{"app_key":"abc123","cluster":"us2"}}]}});
+        let url = pusher_url_from_response(&response).unwrap();
+        assert!(url.starts_with("wss://ws-us2.pusher.com/app/abc123?"));
+        assert!(pusher_url_from_response(&json!({"data":{"connections":[]}})).is_err());
+        let bad = json!({"data":{"connections":[{"provider":"pusher","credentials":{"app_key":"abc","cluster":"evil.example"}}]}});
+        assert!(pusher_url_from_response(&bad).is_err());
     }
 
     #[test]

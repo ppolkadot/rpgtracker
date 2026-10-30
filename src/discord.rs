@@ -14,6 +14,7 @@ const MAX_TITLE: usize = 256;
 const MAX_FIELDS: usize = 25;
 const MAX_FIELD_NAME: usize = 256;
 const MAX_FIELD_VALUE: usize = 1024;
+const MAX_EMBED_TOTAL: usize = 6000;
 
 const MAX_ATTEMPTS: u64 = 3;
 const MAX_RETRY_DELAY: Duration = Duration::from_secs(30);
@@ -116,23 +117,32 @@ pub fn build_payload(
     let content = truncate(&render(&streamer.ping_message), MAX_CONTENT);
 
     // Discord rejects empty names/values, so drop fields that render to nothing.
+    let embed_title = truncate(&title, MAX_TITLE);
+    let mut remaining = MAX_EMBED_TOTAL - embed_title.chars().count() - "Kick Stream Monitor".len();
     let fields: Vec<Value> = streamer
         .fields
         .iter()
         .map(|f| (render(&f.name), render(&f.value), f.inline))
         .filter(|(name, value, _)| !name.is_empty() && !value.is_empty())
         .take(MAX_FIELDS)
-        .map(|(name, value, inline)| {
-            json!({
-                "name": truncate(&name, MAX_FIELD_NAME),
-                "value": truncate(&value, MAX_FIELD_VALUE),
+        .filter_map(|(name, value, inline)| {
+            if remaining < 2 {
+                return None;
+            }
+            let name = truncate(&name, MAX_FIELD_NAME.min(remaining - 1));
+            remaining -= name.chars().count();
+            let value = truncate(&value, MAX_FIELD_VALUE.min(remaining));
+            remaining -= value.chars().count();
+            Some(json!({
+                "name": name,
+                "value": value,
                 "inline": inline
-            })
+            }))
         })
         .collect();
 
     let mut embed = json!({
-        "title": truncate(&title, MAX_TITLE),
+        "title": embed_title,
         "url": stream_url,
         "color": color,
         "fields": fields,
@@ -320,11 +330,37 @@ mod tests {
             MAX_CONTENT
         );
         let fields = payload["embeds"][0]["fields"].as_array().unwrap();
-        assert_eq!(fields.len(), MAX_FIELDS);
+        assert!(fields.len() <= MAX_FIELDS);
         assert_eq!(
             fields[0]["value"].as_str().unwrap().chars().count(),
             MAX_FIELD_VALUE
         );
+    }
+
+    #[test]
+    fn payload_obeys_total_embed_limit() {
+        let mut s = streamer();
+        s.fields = (0..25)
+            .map(|i| crate::config::EmbedField {
+                name: format!("field{i}"),
+                value: "x".repeat(1024),
+                inline: false,
+            })
+            .collect();
+        let payload = build_payload("", &app_config(), &s, None, 0);
+        let embed = &payload["embeds"][0];
+        let total = embed["title"].as_str().unwrap().chars().count()
+            + embed["footer"]["text"].as_str().unwrap().chars().count()
+            + embed["fields"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|f| {
+                    f["name"].as_str().unwrap().chars().count()
+                        + f["value"].as_str().unwrap().chars().count()
+                })
+                .sum::<usize>();
+        assert!(total <= 6000, "embed has {total} characters");
     }
 
     #[test]

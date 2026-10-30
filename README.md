@@ -40,7 +40,7 @@ Kick (Pusher WebSocket) ──► rpgtracker ──► Discord webhook
                                format message
 ```
 
-1. On startup the bot connects to Kick's Pusher feed and subscribes to each configured `channel_id`.
+1. On startup the bot asks Kick for current Pusher connection settings, connects, and subscribes to each configured `channel_id`. The logs report connection and subscription confirmations separately.
 2. When a `StreamerIsLive` event arrives, it reloads `config.json`, checks the category filter and the cooldown, and builds the message.
 3. The message is posted to your Discord webhook. The cooldown only starts once Discord accepts it.
 
@@ -135,9 +135,11 @@ Usable in `ping_message` and in the `name` and `value` of every field:
 - **Category precedence.** A matching `category_overrides` entry wins over `custom_category`, which wins over the name Kick reports. Matching is case-insensitive.
 - **Events without a category.** If Kick sends no category, the alert is always sent, regardless of `allowed_categories`, and the label defaults to "Just Chatting".
 - **Discord limits.** Message content is cut at 2000 characters, titles at 256, field names at 256 and field values at 1024. At most 25 fields are sent, and fields that render empty are dropped because Discord rejects them.
+- **Embed budget.** The total text in the embed is limited to 6000 characters; later fields may be shortened or omitted.
 - **Hot reload.** `config.json` is re-read on every live event, and again on every reconnect. A newly added streamer is subscribed to on the next reconnect. If the file is invalid at runtime, the bot logs a warning and keeps the last good config.
 - **Delivery.** Rate limits (429) and server errors (5xx) are retried, for up to 3 attempts in total, honoring Discord's `Retry-After`. Other errors are logged and not retried.
 - **Reconnects.** Connection drops reconnect with exponential backoff, from 5 seconds up to 5 minutes. A connection that goes silent for 3 minutes is treated as dead and re-established.
+- **Outages and restarts.** The event feed has no replay in this application, so streams that start while disconnected can be missed. Cooldowns are in memory and reset when the process restarts.
 
 ## Running
 
@@ -163,7 +165,7 @@ The bot runs until stopped and logs to standard output. Set `RUST_LOG=debug` for
 | Panics on startup with `Missing DISCORD_WEBHOOK_URL` | The variable is not set. Put it in `.env` or `secrets.env` in the directory you run the bot from. |
 | `Could not load config on startup` | `config.json` is missing or is not valid JSON. The error includes the path and the reason. |
 | Connects but no alerts arrive | Check `channel_id`, make sure the category is not excluded by `allowed_categories`, and remember the cooldown. Run with `RUST_LOG=debug`. |
-| Alerts stopped after working for a while | Kick may have rotated its public Pusher key. See the constants at the top of `src/kick.rs`. |
+| `Could not obtain Kick connection settings` | Kick's realtime connection endpoint may be unavailable, blocked, or changed. The bot retries; check network access and the configured channel ID. |
 | `{role_ping}` renders as nothing | `ROLE_ID` is not set. |
 | The log shows `no data received for 180s` | The connection went silent and the bot reconnected on its own. If it happens constantly, run with `RUST_LOG=debug` and check your network. |
 
